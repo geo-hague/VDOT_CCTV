@@ -83,8 +83,15 @@ function parseTmddSigns(xmlText) {
       Longitude: lon != null ? parseFloat(lon) / 1e6 : null,
       Messages: (dmsOn && msgText) ? [msgText] : ['NO_MESSAGE'],
       communicationStatus: textOf(rec, 'deviceStatus'),        // kept for debugging, not used for matching
+      deviceType: textOf(rec, 'device-type'),                  // "VMS", "LCS", "LUS", "VSL", "Arrow Board"
     };
-  }).filter(s => s.Latitude != null && s.Longitude != null);
+  }).filter(s => s.Latitude != null && s.Longitude != null)
+    // Only real text DMS (VMS) — exclude Variable Speed Limit signs, lane
+    // control signals, arrow boards, etc., which show numbers/symbols, not
+    // travel advisories. deviceType is missing on some records (unconfirmed
+    // field placement, same caveat as elsewhere), so don't drop those —
+    // only exclude a record when we positively know it's non-VMS.
+    .filter(s => !s.deviceType || s.deviceType.toUpperCase() === 'VMS');
 
   setDebug({
     dmsRecordCount: records.length,
@@ -101,11 +108,18 @@ function parseTmddSigns(xmlText) {
 // is westbound. Only used as a fallback — DirectionOfTravel is trusted
 // whenever it actually says something. Only Name is checked — other fields
 // like Id can also contain "DMS" without actually encoding direction.
+// VA's device-name/device-public-name spells direction out as a full word
+// mid-string (e.g. "I-29 East Marker 148.41"), unlike NC's trailing-letter
+// convention (e.g. "DMS13-I40-60W"). Try both: a whole cardinal word first
+// (VA's style), then a trailing letter (kept in case some VA signs use it).
 function directionFromSignId(s) {
   const map = { N: 'Northbound', S: 'Southbound', E: 'Eastbound', W: 'Westbound' };
   if (typeof s.Name !== 'string') return null;
-  const m = /([NSEW])\s*[)\]]*\s*$/i.exec(s.Name.trim());
-  return m ? map[m[1].toUpperCase()] : null;
+  const name = s.Name.trim();
+  const wordMatch = /\b(North|South|East|West)\b/i.exec(name);
+  if (wordMatch) return map[wordMatch[1][0].toUpperCase()];
+  const letterMatch = /([NSEW])\s*[)\]]*\s*$/i.exec(name);
+  return letterMatch ? map[letterMatch[1].toUpperCase()] : null;
 }
 
 function pickActiveMessageSign(lat, lon) {
