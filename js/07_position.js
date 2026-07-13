@@ -13,7 +13,11 @@ async function handlePosition(lat, lon, source) {
   updateDirection(lat, lon);
 
   const now = Date.now();
-  if (now - lastHighwayCheck > HIGHWAY_RECHECK_MS) {
+  const effectiveRecheckMs = Math.min(
+    HIGHWAY_RECHECK_MS * Math.pow(2, overpassFailStreak),
+    HIGHWAY_RECHECK_MAX_MS
+  );
+  if (now - lastHighwayCheck > effectiveRecheckMs) {
     lastHighwayCheck = now;
     const mySeq = ++highwayCheckSeq;
     const snap = await snapToHighway(lat, lon);
@@ -28,9 +32,18 @@ async function handlePosition(lat, lon, source) {
     highwayCheckAppliedSeq = mySeq;
     const snapKeys = snap.normalizedList; // e.g., ["I-40", "US-74"]
 
+    if (snap.error) {
+      // Network error, non-2xx, or 429 — back off exponentially so a
+      // rate-limit doesn't just get hammered again next tick. Resets to 0
+      // below on the next successful (even if empty) response.
+      overpassFailStreak = Math.min(overpassFailStreak + 1, 6); // cap: 6s * 2^6 = 384s, already clamped to HIGHWAY_RECHECK_MAX_MS anyway
+      setDebug({ overpassError: snap.error, overpassBackoffMs: effectiveRecheckMs });
+    } else {
+    overpassFailStreak = 0; // any successful response, even an empty one, means Overpass is reachable again
+
     if (snapKeys.length === 0) {
-      // No confident match or API error this round — do nothing and keep current lock
-      setDebug({ overpassError: snap.error || "No ways found within radius" });
+      // No confident match this round (query succeeded, just no nearby motorway/trunk ways)
+      setDebug({ overpassError: "No ways found within radius" });
     } else if (!currentHighway) {
       // 1. First lock of the drive — accept immediately
       currentHighway = snapKeys;
@@ -72,6 +85,7 @@ async function handlePosition(lat, lon, source) {
       pending: pendingHighway,
       pendingCount: pendingHighwayCount
     });
+    }
     }
   }
 

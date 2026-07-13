@@ -18,6 +18,7 @@ let highwayCheckAppliedSeq = 0; // seq of the last response we actually applied;
                           // a response only gets discarded if a newer one already
                           // beat it to being applied, not just because a newer
                           // request was fired while this one was still in flight
+let overpassFailStreak = 0; // consecutive Overpass failures (network error, non-2xx, incl. 429) — drives exponential backoff so a rate-limit doesn't just get hammered again 6s later
 
 // Mile marker / state-DOT-convention direction (Eastbound/Northbound/etc, derived
 // from ascending/descending mileposts) — separate from currentDirectionLabel
@@ -47,7 +48,15 @@ const msgBannerEl = document.getElementById('msg-sign-banner');
 const slotEls = [document.getElementById('slot-0'), document.getElementById('slot-1')];
 const debugContent = document.getElementById('debug-content');
 
+// setDebug merges into a persistent debugState rather than replacing the
+// panel outright — several independent subsystems (highway tracking, DMS,
+// etc.) call this on their own schedules, and an overwrite-based version
+// meant whichever one last ran won, silently hiding the others' output
+// (e.g. DMS's once-per-30s debug getting stomped within a second or two by
+// the much more frequent highway/camera tracking debug).
+let debugState = {};
 function setDebug(obj) {
-  debugContent.textContent = JSON.stringify(obj, null, 2);
+  Object.assign(debugState, obj);
+  debugContent.textContent = JSON.stringify(debugState, null, 2);
 }
 
