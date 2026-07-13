@@ -51,6 +51,26 @@ function textOf(root, tagLocalName) {
   return el && el.textContent.trim() !== '' ? el.textContent.trim() : null;
 }
 
+// Sign text is often stored as one child element per displayed line (e.g.
+// <line>LEFT LANE</line><line>FOR PASSING</line>). Plain .textContent walks
+// every descendant text node with NO separator between them, which is what
+// was producing "LEFT LANEFOR PASSINGNOT CRUISING" — this instead collects
+// each child's text separately and joins with a single space. Falls back
+// gracefully to the same result as textOf() when there's just one text node.
+function joinedTextOf(root, tagLocalName) {
+  const el = findDescendant(root, tagLocalName);
+  if (!el) return null;
+  const parts = [];
+  el.childNodes.forEach(node => {
+    if (node.nodeType === 3 || node.nodeType === 1) { // TEXT_NODE or ELEMENT_NODE
+      const t = node.textContent.trim();
+      if (t) parts.push(t);
+    }
+  });
+  const joined = parts.join(' ').replace(/\s+/g, ' ').trim();
+  return joined || null;
+}
+
 const TMDD_DIR_MAP = { north: 'Northbound', south: 'Southbound', east: 'Eastbound', west: 'Westbound' };
 
 function parseTmddSigns(xmlText) {
@@ -71,7 +91,7 @@ function parseTmddSigns(xmlText) {
     const locationName = textOf(rec, 'locationName'); // e.g. "I-95N" — route + direction packed together
     const roadway = locationName ? locationName.replace(/[NSEW]$/i, '') : null;
 
-    const msgText = textOf(rec, 'dms-current-message-text');
+    const msgText = joinedTextOf(rec, 'dms-current-message-text');
     const dmsOn = textOf(rec, 'dms-device-status') === 'on';
 
     return {
