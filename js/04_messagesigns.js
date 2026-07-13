@@ -51,24 +51,28 @@ function textOf(root, tagLocalName) {
   return el && el.textContent.trim() !== '' ? el.textContent.trim() : null;
 }
 
-// Sign text is often stored as one child element per displayed line (e.g.
-// <line>LEFT LANE</line><line>FOR PASSING</line>). Plain .textContent walks
-// every descendant text node with NO separator between them, which is what
-// was producing "LEFT LANEFOR PASSINGNOT CRUISING" — this instead collects
-// each child's text separately and joins with a single space. Falls back
-// gracefully to the same result as textOf() when there's just one text node.
-function joinedTextOf(root, tagLocalName) {
-  const el = findDescendant(root, tagLocalName);
-  if (!el) return null;
-  const parts = [];
-  el.childNodes.forEach(node => {
-    if (node.nodeType === 3 || node.nodeType === 1) { // TEXT_NODE or ELEMENT_NODE
-      const t = node.textContent.trim();
-      if (t) parts.push(t);
-    }
-  });
-  const joined = parts.join(' ').replace(/\s+/g, ' ').trim();
-  return joined || null;
+// dms-current-message-text is explicitly documented by VDOT as NOT
+// including line/page break info — it's every line concatenated with
+// nothing between them ("LEFT LANEFOR PASSING..."). The real formatting
+// lives in dms-current-message: a base64-encoded NTCIP 1203 MULTI markup
+// string, where [nlX]/[np...] mark line/page breaks and other bracketed
+// tags ([foX], [jlX], [cwX], etc.) are font/justify/color formatting we
+// don't need. Decode that instead and turn line/page breaks into spaces
+// for a single-line banner; strip every other bracketed tag entirely.
+function decodeMultiMessage(base64) {
+  if (!base64) return null;
+  let raw;
+  try {
+    raw = atob(base64.trim());
+  } catch (err) {
+    return null;
+  }
+  return raw
+    .replace(/\[np\d*\]/gi, ' ')   // new page
+    .replace(/\[nl\d*\]/gi, ' ')   // new line
+    .replace(/\[[^\]]*\]/g, '')    // any other MULTI tag (font/justify/color/etc.) — strip, not a line break
+    .replace(/\s+/g, ' ')
+    .trim() || null;
 }
 
 const TMDD_DIR_MAP = { north: 'Northbound', south: 'Southbound', east: 'Eastbound', west: 'Westbound' };
@@ -91,7 +95,8 @@ function parseTmddSigns(xmlText) {
     const locationName = textOf(rec, 'locationName'); // e.g. "I-95N" — route + direction packed together
     const roadway = locationName ? locationName.replace(/[NSEW]$/i, '') : null;
 
-    const msgText = joinedTextOf(rec, 'dms-current-message-text');
+    const msgTextRaw = decodeMultiMessage(textOf(rec, 'dms-current-message'));
+    const msgText = msgTextRaw || textOf(rec, 'dms-current-message-text'); // fallback if base64 missing/undecodable — no line breaks in this field, so lines may run together
     const dmsOn = textOf(rec, 'dms-device-status') === 'on';
 
     return {
