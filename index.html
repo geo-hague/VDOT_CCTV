@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>VA Traffic</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.8/hls.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="top-bar-group">
+    <div id="status-bar">
+      <div class="coords-block">
+        <span class="dot searching" id="gps-dot"></span>
+        <span id="gps-text">Locating…</span>
+      </div>
+      <div class="speed-block">
+        <div class="speed-label">MPH</div>
+        <div class="speed-value" id="speed-value">—</div>
+      </div>
+      <div class="highway-block" id="highway-block">
+        <div class="shield-group" id="shield-group"></div>
+        <div class="highway-info">
+          <div class="highway" id="highway-text">—</div>
+        </div>
+        <div class="mile-marker-sign" id="mile-marker-sign">
+          <div class="mm-label">MILE</div>
+          <div class="mm-value" id="mm-value">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="msg-sign-banner" role="alert"></div>
+  </div>
+
+  <div id="scan-bar">
+    <button id="scan-behind-btn">◀ Cam Behind</button>
+    <button id="scan-locate-btn" title="Return to live tracking">Closest Cam</button>
+    <button id="scan-ahead-btn">Cam Ahead ▶</button>
+  </div>
+
+  <div id="cam-list">
+    <div class="cam-slot empty" id="slot-0">Waiting for GPS + highway lock…</div>
+    <div class="cam-slot empty" id="slot-1">—</div>
+  </div>
+
+  <div id="sim-panel">
+    <details>
+      <summary>🧪 Simulate a drive (no GPS needed)</summary>
+      <div class="sim-body">
+        <label>Start (lat,lon)
+          <input type="text" id="sim-start" placeholder="35.2034,-80.9631" value="35.819716,-78.741887">
+        </label>
+        <label>End (lat,lon)
+          <input type="text" id="sim-end" placeholder="35.3050,-80.9530" value="35.891144,-78.849057">
+        </label>
+        <label>Speed (mph)
+          <input type="number" id="sim-speed" value="60" min="5" max="100">
+        </label>
+        <label>Playback speed
+          <select id="sim-multiplier">
+            <option value="1" selected>Real-time (1x)</option>
+            <option value="2">2x fast-forward</option>
+            <option value="5">5x fast-forward</option>
+            <option value="10">10x fast-forward</option>
+          </select>
+        </label>
+        <div class="sim-buttons">
+          <button id="sim-start-btn">Start simulation</button>
+          <button id="sim-stop-btn">Stop</button>
+        </div>
+        <div class="sim-hint">Tip: pick two coordinates that are both on the same highway with active VA 511 cameras, a few miles apart, so you're guaranteed to pass real cameras. Open the Debug panel below to watch bearing/highway lock in real time.</div>
+      </div>
+    </details>
+  </div>
+
+  <details id="debug">
+    <summary>Debug info</summary>
+    <div id="debug-content">—</div>
+  </details>
+
+
+  <script src="js/00_config.js"></script>
+  <script src="js/01_state.js"></script>
+  <script src="js/02_geo-utils.js"></script>
+  <script src="js/03_highway.js"></script>
+  <script src="js/04_messagesigns.js"></script>
+  <script src="js/05_cameras.js"></script>
+  <script src="js/06_browse.js"></script>
+  <script src="js/07_position.js"></script>
+  <script src="js/08_main.js"></script>
+</body>
+</html>
