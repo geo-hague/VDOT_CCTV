@@ -42,7 +42,7 @@ const COMMONS_FILEPATH = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
 // leaking the token. See messagesigns-worker/ for the Cloudflare Worker to
 // deploy (free tier) and messagesigns-worker/README.md for setup. Point
 // this at your deployed worker URL once it's live.
-const MSG_SIGN_PROXY_URL = 'https://va-dms-proxy.YOUR-WORKER-SUBDOMAIN.workers.dev/';
+const MSG_SIGN_PROXY_URL = 'https://vdotdms.m-c-hunt429.workers.dev/';
 const MSG_SIGN_RANGE_M = 16093.4;   // 10 miles
 const MSG_SIGN_POLL_MS = 30000;     // re-poll signs this often so a sign 10mi out
                                      // can't silently change message before we reach it
