@@ -3,22 +3,97 @@
 // shares top-level `let`/`const` scope with the other js/*.js files.
 
 // ---------- DMS message signs (via proxy) ----------
+// VA's feed is XML (TMDD/IEEE-1512-flavored), not JSON — fetched as text
+// and parsed below into the same shape the rest of this file already
+// expects: { Id, Name, Roadway, DirectionOfTravel, Latitude, Longitude, Messages }.
 async function fetchMessageSignsIfNeeded() {
   const now = Date.now();
   if (now - lastMsgSignFetch < MSG_SIGN_POLL_MS) return;
   lastMsgSignFetch = now;
   if (!MSG_SIGN_PROXY_URL || MSG_SIGN_PROXY_URL.includes('YOUR-WORKER-SUBDOMAIN')) {
-    setDebug({ messageSigns: 'DMS not configured yet — VA SmarterRoads dataset/proxy pending' });
+    setDebug({ messageSigns: 'DMS proxy not configured yet — deploy messagesigns-worker/ and update the constant' });
     return;
   }
   try {
     const resp = await fetch(MSG_SIGN_PROXY_URL);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    messageSigns = await resp.json();
-    if (!Array.isArray(messageSigns)) throw new Error('unexpected response shape: ' + JSON.stringify(messageSigns).slice(0, 200));
+    const xmlText = await resp.text();
+    messageSigns = parseTmddSigns(xmlText);
   } catch (err) {
     setDebug({ messageSigns: `proxy fetch failed: ${err.message}` });
   }
+}
+
+// ---------- TMDD/IEEE-1512 XML parsing ----------
+// The feed's real element nesting is only partially confirmed (we've seen
+// the im:incidentLoc block — locationName/miDec/travelDirection/lat/lon —
+// but not yet a live sample of the flat dms-* message fields alongside it).
+// So rather than hard-code an exact path, this walks each record's whole
+// subtree looking for each field by local tag name (namespace-prefix
+// agnostic), and is defensive about anything coming back missing. If
+// messages aren't showing up, check the Debug panel — dmsRecordCount and
+// dmsSampleFields below show exactly what was found per record so the
+// field lookups here can be corrected against real data.
+function localName(el) {
+  return el.localName || el.nodeName.split(':').pop();
+}
+
+function findDescendant(root, tagLocalName) {
+  const all = root.getElementsByTagName('*');
+  for (let i = 0; i < all.length; i++) {
+    if (localName(all[i]) === tagLocalName) return all[i];
+  }
+  return null;
+}
+
+function textOf(root, tagLocalName) {
+  const el = findDescendant(root, tagLocalName);
+  return el && el.textContent.trim() !== '' ? el.textContent.trim() : null;
+}
+
+const TMDD_DIR_MAP = { north: 'Northbound', south: 'Southbound', east: 'Eastbound', west: 'Westbound' };
+
+function parseTmddSigns(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  const parseErr = doc.getElementsByTagName('parsererror')[0];
+  if (parseErr) throw new Error('XML parse error: ' + parseErr.textContent.slice(0, 200));
+
+  // Each sign's record — confirmed from the one sample we've seen (a
+  // malfunctioning sign) to be an <im:incidentDescription> block containing
+  // im:incidentLoc (location) directly. Assumed, not yet confirmed, that
+  // operating signs' dms-* message fields live in the same block.
+  const records = Array.from(doc.getElementsByTagName('*')).filter(el => localName(el) === 'incidentDescription');
+
+  const parsed = records.map(rec => {
+    const lat = textOf(rec, 'latitude');
+    const lon = textOf(rec, 'longitude');
+    const dir = textOf(rec, 'travelDirection');
+    const locationName = textOf(rec, 'locationName'); // e.g. "I-95N" — route + direction packed together
+    const roadway = locationName ? locationName.replace(/[NSEW]$/i, '') : null;
+
+    const msgText = textOf(rec, 'dms-current-message-text');
+    const dmsOn = textOf(rec, 'dms-device-status') === 'on';
+
+    return {
+      Id: textOf(rec, 'device-id') || textOf(rec, 'device-native-id') || textOf(rec, 'senderIncidentID'),
+      Name: textOf(rec, 'device-public-name') || textOf(rec, 'device-name'),
+      Roadway: roadway,
+      DirectionOfTravel: dir ? (TMDD_DIR_MAP[dir.toLowerCase()] || null) : null,
+      Latitude: lat != null ? parseFloat(lat) / 1e6 : null,   // millionths of degrees, per the field docs
+      Longitude: lon != null ? parseFloat(lon) / 1e6 : null,
+      Messages: (dmsOn && msgText) ? [msgText] : ['NO_MESSAGE'],
+      communicationStatus: textOf(rec, 'deviceStatus'),        // kept for debugging, not used for matching
+    };
+  }).filter(s => s.Latitude != null && s.Longitude != null);
+
+  setDebug({
+    dmsRecordCount: records.length,
+    dmsParsedCount: parsed.length,
+    dmsWithMessages: parsed.filter(s => s.Messages[0] !== 'NO_MESSAGE').length,
+    dmsSample: parsed.slice(0, 3), // check this against real sign data if messages don't show up
+  });
+
+  return parsed;
 }
 
 // Some DMS entries report DirectionOfTravel as "Unknown" (or omit it

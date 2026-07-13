@@ -37,15 +37,12 @@ const MILEMARKER_RECHECK_MS = 8000;      // how often we re-query for the curren
 const COMMONS_FILEPATH = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
 
 // ---- VDOT SmarterRoads message signs (DMS), via a small proxy ----
-// Not wired up yet — SmarterRoads requires an account + subscribing to a
-// DMS dataset, and which dataset (and its field shape) is still being
-// sorted out. Left blank on purpose: 04_messagesigns.js already checks for
-// this being empty/unconfigured and skips DMS polling cleanly. Once the
-// right SmarterRoads dataset + key are confirmed, this should point at a
-// small serverless proxy (same pattern as NC's messagesigns-worker/) that
-// holds the SmarterRoads key server-side, since a static site can't keep
-// a key secret.
-const MSG_SIGN_PROXY_URL = '';
+// The feed is TMDD/IEEE-1512-flavored XML and needs a token, so — same
+// reason as NC's DriveNC key — a static site can't call it directly without
+// leaking the token. See messagesigns-worker/ for the Cloudflare Worker to
+// deploy (free tier) and messagesigns-worker/README.md for setup. Point
+// this at your deployed worker URL once it's live.
+const MSG_SIGN_PROXY_URL = 'https://va-dms-proxy.YOUR-WORKER-SUBDOMAIN.workers.dev/';
 const MSG_SIGN_RANGE_M = 16093.4;   // 10 miles
 const MSG_SIGN_POLL_MS = 30000;     // re-poll signs this often so a sign 10mi out
                                      // can't silently change message before we reach it
