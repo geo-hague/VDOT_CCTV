@@ -150,6 +150,7 @@ function startSimulation() {
   lastHighwayCheck = 0;
   highwayCheckSeq = 0;
   highwayCheckAppliedSeq = 0;
+  overpassFailStreak = 0;
   highwayText.textContent = '—';
   browseActive = false;
   browseList = [];
