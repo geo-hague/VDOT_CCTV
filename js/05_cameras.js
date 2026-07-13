@@ -295,10 +295,19 @@ function updateDisplay(scoredCams, labels) {
     if (!newOrder[pos]) newOrder[pos] = leftover.shift();
   }
 
-  // Physically reorder the DOM to match (moves nodes, preserves live video).
-  const container = document.getElementById('cam-list');
-  newOrder.forEach(el => container.appendChild(el));
-  slotOrder = newOrder;
+  // Only touch the DOM if the physical order actually needs to change.
+  // appendChild() on an element already in the DOM still MOVES it (removes
+  // + reinserts) — this ran unconditionally on every position update, even
+  // when the order hadn't changed at all, and mobile browsers tend to
+  // auto-scroll to bring a freshly re-inserted <video> element into view.
+  // That's what was resetting scroll to the top while scrolled down to
+  // view the second camera.
+  const orderChanged = newOrder.some((el, i) => el !== slotOrder[i]);
+  if (orderChanged) {
+    const container = document.getElementById('cam-list');
+    newOrder.forEach(el => container.appendChild(el));
+    slotOrder = newOrder;
+  }
 
   slotOrder.forEach((el, pos) => {
     renderCameraIntoEl(el, scoredCams[pos] || null, labels[pos]);
