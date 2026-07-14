@@ -98,13 +98,13 @@ async function handlePosition(lat, lon, source) {
   updateMessageBanner(lat, lon);
 
   const debugScored = getScoredCameras(lat, lon, -SWAP_BUFFER_M, MAX_SEARCH_DIST_M);
-  debugContent.textContent = JSON.stringify({
+  setDebug({
     highway: currentHighway,
     direction: currentDirectionLabel,
     bearing: lastStableBearing ? Math.round(lastStableBearing) : null,
     browseActive,
     candidates: debugScored.map(s => ({ id: s.cam.id, dist: Math.round(s.dist), loc: s.cam.location }))
-  }, null, 2);
+  });
 }
 
 function onPositionError(err) {
