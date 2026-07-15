@@ -24,6 +24,8 @@ let overpassFailStreak = 0; // consecutive Overpass failures (network error, non
 // from ascending/descending mileposts) — separate from currentDirectionLabel
 // above, which is a raw compass bearing used only for camera ahead/behind math.
 let currentMilepost = null;
+let lastMilepostRef = null; // which ref (e.g. "I-95") currentMilepost belongs to — trend comparison
+                             // between readings is only meaningful on the same ref
 let lastMilepostCheck = 0;
 let highwayDirectionLabel = null; // "Eastbound" | "Northbound" | "Southbound" | "Westbound"
 let shieldGroupRefs = null;      // normalized ref list the shield group currently shows

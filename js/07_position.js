@@ -73,6 +73,7 @@ async function handlePosition(lat, lon, source) {
 
       // Clear route-specific tracking so it recalculates for the new highway
       currentMilepost = null;
+      lastMilepostRef = null;
       lastMilepostCheck = 0;
       highwayDirectionLabel = null;
     }
@@ -157,6 +158,7 @@ function startSimulation() {
   browseIndex = 0;
   lastKnownPos = null;
   currentMilepost = null;
+  lastMilepostRef = null;
   lastMilepostCheck = 0;
   highwayDirectionLabel = null;
   shieldGroupRefs = null;

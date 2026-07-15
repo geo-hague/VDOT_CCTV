@@ -430,7 +430,38 @@ async function updateMilepostAndDirection(lat, lon) {
   } else {
     interpolated = candidates[0].mp;
   }
-  currentMilepost = Math.round(interpolated * 10) / 10;
+  const newMilepost = Math.round(interpolated * 10) / 10;
+
+  // ---- Mile-marker ascending/descending override ----
+  // Bearing is the primary signal for direction (set above), but on some
+  // highway segments the SIGNED direction (what mile markers/exit numbers
+  // count up in) doesn't match the road's actual physical compass bearing
+  // — e.g. I-85 between Gastonia and Charlotte, NC is signed "northbound"
+  // the whole way, but the road there physically runs east-southeast, which
+  // a bearing-only check would read as southbound. Mile markers always
+  // increase in the highway's nominal signed direction regardless of local
+  // road geometry: odd-numbered Interstates/US routes run nominally
+  // north-south (ascending = Northbound, descending = Southbound); even-
+  // numbered ones run nominally east-west (ascending = Eastbound,
+  // descending = Westbound). When two consecutive readings on the SAME ref
+  // disagree with the bearing-derived direction, trust the milepost trend
+  // instead — it reflects the road's authoritative signed direction, which
+  // bearing alone can't on a curving/diagonal segment.
+  if (
+    lastMilepostRef === matched.ref &&
+    currentMilepost != null &&
+    Math.abs(newMilepost - currentMilepost) > 0.05 // ignore GPS/interpolation noise between polls
+  ) {
+    const ascending = newMilepost > currentMilepost;
+    const mpDirection = matched.parsedForRef.isEven
+      ? (ascending ? 'Eastbound' : 'Westbound')
+      : (ascending ? 'Northbound' : 'Southbound');
+    if (mpDirection !== highwayDirectionLabel) {
+      highwayDirectionLabel = mpDirection;
+    }
+  }
+  lastMilepostRef = matched.ref;
+  currentMilepost = newMilepost;
 
   mmValueEl.textContent = currentMilepost.toFixed(1);
   mmSignEl.style.display = 'flex';
