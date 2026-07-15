@@ -219,7 +219,17 @@ function updateHighwayShields(refs) {
 
     const dirEl = document.createElement('div');
     dirEl.className = 'direction-label';
-    const dir = bearingToTravelDirection(lastStableBearing, parsed) || highwayDirectionLabel;
+    // highwayDirectionLabel must be checked FIRST — it's the corrected value
+    // (bearing normally, but overridden by mile-marker ascending/descending
+    // trend when the road's local bearing disagrees with its true signed
+    // direction, e.g. I-85 Gastonia-Charlotte). The raw bearing guess is
+    // only a fallback for before we have any milepost data yet (e.g. right
+    // after a fresh highway lock, before the first mile-marker query
+    // resolves) — checking it first would silently overwrite the
+    // correction on every single call, which is exactly what was showing
+    // the wrong direction here even after updateMilepostAndDirection() had
+    // already computed the right one.
+    const dir = highwayDirectionLabel || bearingToTravelDirection(lastStableBearing, parsed);
     dirEl.textContent = shortDirection(dir);
     wrap.appendChild(dirEl);
     shieldDirEls[ref] = dirEl;
@@ -274,7 +284,9 @@ function updateHighwayShields(refs) {
 function refreshShieldDirections() {
   Object.keys(shieldDirEls).forEach(ref => {
     const parsed = parseHighwayRef(ref);
-    const dir = bearingToTravelDirection(lastStableBearing, parsed) || highwayDirectionLabel;
+    // Same priority as updateHighwayShields() above — highwayDirectionLabel
+    // (mile-marker-corrected) must win over the raw bearing guess.
+    const dir = highwayDirectionLabel || bearingToTravelDirection(lastStableBearing, parsed);
     if (dir) shieldDirEls[ref].textContent = shortDirection(dir);
   });
 }
