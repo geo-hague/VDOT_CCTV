@@ -70,32 +70,44 @@ function normalizeHighwayName(raw) {
 // every other file (03_highway.js, 05_cameras.js) can stay unchanged and
 // just deal with { id, lat, lon, roadway, direction, location, videoUrl }.
 async function loadCameras() {
-  const resp = await fetch(CAMERAS_URL);
-  const geojson = await resp.json();
-  const features = geojson.features || [];
+  try {
+    const resp = await fetch(CAMERAS_URL);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const geojson = await resp.json();
+    const features = geojson.features || [];
 
-  allCameras = features
-    .filter(f => {
-      const p = f.properties || {};
-      return p.active !== false && !p.problem_stream && !!p.https_url;
-    })
-    .map(f => {
-      const p = f.properties || {};
-      const coords = (f.geometry && f.geometry.coordinates) || [];
-      const lon = parseFloat(coords[0]);
-      const lat = parseFloat(coords[1]);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-      return {
-        id: p.id ?? p.name,
-        lat, lon,
-        roadway: p.route || '',
-        direction: p.direction || '',
-        location: p.description || p.name || '',
-        videoUrl: p.https_url,   // HLS (.m3u8) — plays via the existing hls.js wiring in 05_cameras.js
-      };
-    })
-    .filter(c => c !== null);
+    allCameras = features
+      .filter(f => {
+        const p = f.properties || {};
+        return p.active !== false && !p.problem_stream && !!p.https_url;
+      })
+      .map(f => {
+        const p = f.properties || {};
+        const coords = (f.geometry && f.geometry.coordinates) || [];
+        const lon = parseFloat(coords[0]);
+        const lat = parseFloat(coords[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        return {
+          id: p.id ?? p.name,
+          lat, lon,
+          roadway: p.route || '',
+          direction: p.direction || '',
+          location: p.description || p.name || '',
+          videoUrl: p.https_url,   // HLS (.m3u8) — plays via the existing hls.js wiring in 05_cameras.js
+        };
+      })
+      .filter(c => c !== null);
 
-  console.log(`Loaded ${allCameras.length} VA cameras.`);
+    console.log(`Loaded ${allCameras.length} VA cameras.`);
+  } catch (err) {
+    // Camera load failing (CORS block, network error, endpoint down, etc.)
+    // must NOT stop the rest of the app from starting — init() awaits this
+    // function, so an uncaught throw here would silently kill GPS watching
+    // and the simulation button along with it. Fail loud in the debug
+    // panel instead, and keep going with an empty camera list.
+    allCameras = [];
+    setDebug({ camerasLoadError: err.message });
+    console.error('Failed to load VA cameras:', err);
+  }
 }
 

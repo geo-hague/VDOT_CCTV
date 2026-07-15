@@ -42,7 +42,11 @@ function observeTopBarGroupHeight() {
 }
 
 async function init() {
-  await loadCameras();
+  try {
+    await loadCameras();
+  } catch (err) {
+    console.error('Unexpected error during loadCameras():', err);
+  }
   acquireWakeLock();
   observeTopBarGroupHeight();
 
