@@ -11,6 +11,11 @@ const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
+const OVERPASS_FETCH_TIMEOUT_MS = 6000; // hard client-side cap per mirror attempt — the query's
+                                          // own [timeout:10] only bounds Overpass's own server-side
+                                          // processing, not how long our fetch() waits for a response,
+                                          // so a hung/slow mirror could otherwise stall highway lock
+                                          // far longer than necessary before ever trying the 2nd mirror
 const SNAP_RADIUS_M = 60; // how close a way must be to count as "you're on it" —
                            // loose enough to tolerate the test simulator's straight-line
                            // path drifting off the actual (curved) road; real GPS traces
@@ -26,11 +31,15 @@ async function snapToHighway(lat, lon) {
 
   let lastError = null;
   for (const baseUrl of OVERPASS_URLS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OVERPASS_FETCH_TIMEOUT_MS);
     try {
       const resp = await fetch(baseUrl, {
         method: 'POST',
         body: 'data=' + encodeURIComponent(query),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       if (!resp.ok) {
         lastError = `HTTP ${resp.status} from ${baseUrl}`;
         continue; // try next mirror
@@ -63,7 +72,10 @@ async function snapToHighway(lat, lon) {
       const normalizedList = sources.map(normalizeHighwayName).filter(Boolean);
       return { rawName: sources.join(' / '), normalizedList, error: null };
     } catch (err) {
-      lastError = `${baseUrl}: ${err.message}`;
+      clearTimeout(timeoutId);
+      lastError = err.name === 'AbortError'
+        ? `${baseUrl}: timed out after ${OVERPASS_FETCH_TIMEOUT_MS}ms`
+        : `${baseUrl}: ${err.message}`;
     }
   }
   console.warn('Overpass snap failed on all mirrors:', lastError);
@@ -373,7 +385,7 @@ async function updateMilepostAndDirection(lat, lon) {
     const dist = (a.LATITUDE != null && a.LONGITUDE != null)
       ? haversineMeters(lat, lon, a.LATITUDE, a.LONGITUDE)
       : Infinity;
-    return { mp, dist, routeName: a.HTRIS_DEF, direction: resolveMileMarkerDirection(a.DIR, a.HTRIS_DEF) };
+    return { mp, dist, lat: a.LATITUDE, lon: a.LONGITUDE, routeName: a.HTRIS_DEF, direction: resolveMileMarkerDirection(a.DIR, a.HTRIS_DEF) };
   });
 
   // Try every candidate ref (both Interstates of a multiplex, or just the
@@ -430,38 +442,48 @@ async function updateMilepostAndDirection(lat, lon) {
   } else {
     interpolated = candidates[0].mp;
   }
-  const newMilepost = Math.round(interpolated * 10) / 10;
+  currentMilepost = newMilepost;
 
-  // ---- Mile-marker ascending/descending override ----
-  // Bearing is the primary signal for direction (set above), but on some
-  // highway segments the SIGNED direction (what mile markers/exit numbers
-  // count up in) doesn't match the road's actual physical compass bearing
-  // — e.g. I-85 between Gastonia and Charlotte, NC is signed "northbound"
-  // the whole way, but the road there physically runs east-southeast, which
-  // a bearing-only check would read as southbound. Mile markers always
-  // increase in the highway's nominal signed direction regardless of local
-  // road geometry: odd-numbered Interstates/US routes run nominally
-  // north-south (ascending = Northbound, descending = Southbound); even-
-  // numbered ones run nominally east-west (ascending = Eastbound,
-  // descending = Westbound). When two consecutive readings on the SAME ref
-  // disagree with the bearing-derived direction, trust the milepost trend
-  // instead — it reflects the road's authoritative signed direction, which
-  // bearing alone can't on a curving/diagonal segment.
-  if (
-    lastMilepostRef === matched.ref &&
-    currentMilepost != null &&
-    Math.abs(newMilepost - currentMilepost) > 0.05 // ignore GPS/interpolation noise between polls
-  ) {
-    const ascending = newMilepost > currentMilepost;
-    const mpDirection = matched.parsedForRef.isEven
-      ? (ascending ? 'Eastbound' : 'Westbound')
-      : (ascending ? 'Northbound' : 'Southbound');
-    if (mpDirection !== highwayDirectionLabel) {
-      highwayDirectionLabel = mpDirection;
+  // ---- Mile-marker ascending/descending check ----
+  // Single-poll calculation: find the nearest matched marker AHEAD of us
+  // and the nearest one BEHIND us (via bearing projection — same technique
+  // used for camera scoring elsewhere in this file), then just compare
+  // their MP values directly. No need to wait across multiple polls for
+  // this, unlike a naive "compare this reading to the last one" approach.
+  //
+  // This matters because some highway segments physically curve away from
+  // their nominal compass direction — e.g. I-85 between Gastonia and
+  // Charlotte, NC is signed "northbound" the whole way, but the road there
+  // runs east-southeast, which a bearing-only check reads as southbound.
+  // Mile markers always increase in the highway's true SIGNED direction
+  // regardless of local road geometry, so once we can tell which marker is
+  // ahead vs behind, this is authoritative: odd-numbered routes run
+  // nominally north-south (ascending = Northbound, descending =
+  // Southbound); even-numbered ones run nominally east-west (ascending =
+  // Eastbound, descending = Westbound).
+  //
+  // Uses whatever bearing estimate we have, even a not-yet-"stable"
+  // (unconfirmed) one — this is a one-shot direction check, not the
+  // ahead/behind camera math that genuinely needs stability to avoid
+  // flicker, so there's no reason to wait for full bearing confirmation.
+  const bearingGuess = lastStableBearing != null ? lastStableBearing : pendingBearing;
+  if (bearingGuess != null) {
+    const withProjection = candidates
+      .filter(c => c.lat != null && c.lon != null)
+      .map(c => {
+        const bearingToMarker = bearingDeg(lat, lon, c.lat, c.lon);
+        const angle = angleDiff(bearingToMarker, bearingGuess);
+        return { ...c, proj: c.dist * Math.cos(toRad(angle)) }; // + ahead, - behind
+      });
+    const ahead = withProjection.filter(c => c.proj > 0).sort((a, b) => a.proj - b.proj)[0];
+    const behind = withProjection.filter(c => c.proj <= 0).sort((a, b) => b.proj - a.proj)[0];
+    if (ahead && behind && ahead.mp !== behind.mp) {
+      const ascending = ahead.mp > behind.mp;
+      highwayDirectionLabel = matched.parsedForRef.isEven
+        ? (ascending ? 'Eastbound' : 'Westbound')
+        : (ascending ? 'Northbound' : 'Southbound');
     }
   }
-  lastMilepostRef = matched.ref;
-  currentMilepost = newMilepost;
 
   mmValueEl.textContent = currentMilepost.toFixed(1);
   mmSignEl.style.display = 'flex';
