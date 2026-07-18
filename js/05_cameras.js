@@ -10,6 +10,7 @@
 function getScoredCameras(lat, lon, minDist, maxDist) {
   if (!currentHighway || !currentHighway.length) return [];
 
+  const topType = highestPriorityType(currentHighway);
   const candidates = allCameras.filter(c => currentHighway.includes(normalizeHighwayName(c.roadway)));
 
   const scored = candidates.map(c => {
@@ -29,7 +30,23 @@ function getScoredCameras(lat, lon, minDist, maxDist) {
     }
 
     return { cam: c, dist };
-  }).filter(s => s.dist >= minDist && s.dist <= maxDist);
+  }).filter(s => {
+    // Same-tier-type refs (e.g. both Interstates of a real multiplex) all
+    // get the full search radius — not just whichever one happens to be
+    // "primary". Only a strictly LOWER-tier-type ref (e.g. US-25/US-74
+    // alongside I-26) gets capped to SECONDARY_REF_RANGE_M.
+    //
+    // NOTE: SECONDARY_REF_RANGE_M lives in 00_config.js and
+    // highestPriorityType() lives in 03_highway.js — this file MUST be
+    // deployed alongside both, or every call here throws a ReferenceError
+    // that silently kills cameras, mile markers, and direction downstream.
+    const camParsed = parseHighwayRef(normalizeHighwayName(s.cam.roadway));
+    const isTopTier = camParsed && camParsed.type === topType;
+    if (isTopTier) return s.dist >= minDist && s.dist <= maxDist;
+    const cappedMin = Math.max(minDist, -SECONDARY_REF_RANGE_M);
+    const cappedMax = Math.min(maxDist, SECONDARY_REF_RANGE_M);
+    return s.dist >= cappedMin && s.dist <= cappedMax;
+  });
 
   scored.sort((a, b) => a.dist - b.dist);
   return scored;

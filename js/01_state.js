@@ -60,3 +60,13 @@ function setDebug(obj) {
   debugContent.textContent = JSON.stringify(debugState, null, 2);
 }
 
+// Fully wipes the debug panel rather than merging — needed anywhere state
+// gets reset (e.g. starting a new simulation), or stale keys from before
+// the reset (like a previously-locked highway) stick around indefinitely
+// and contradict the freshly-reset live values, which is exactly the kind
+// of thing the debug panel exists to catch, not cause.
+function clearDebug() {
+  debugState = {};
+  debugContent.textContent = JSON.stringify(debugState, null, 2);
+}
+

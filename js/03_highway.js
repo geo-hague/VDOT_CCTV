@@ -160,6 +160,27 @@ function primaryHighwayRef(list) {
   })[0];
 }
 
+// The highest-priority route TYPE present in a ref list (not a single
+// ref — that's what primaryHighwayRef() is for). Used to distinguish a
+// genuine long Interstate-Interstate multiplex (e.g. I-64/I-81, both
+// type "I", tied — both should be treated as equally "primary") from a
+// short accidental overlap with a lower-tier route (e.g. I-26 with
+// US-25/US-74 — only "I" is top-tier there). primaryHighwayRef() would
+// arbitrarily tie-break two Interstates by array order, which is exactly
+// wrong for deciding "should this ref get the full search radius" — two
+// same-type refs should both qualify, not just whichever sorted first.
+function highestPriorityType(list) {
+  if (!list || !list.length) return null;
+  const priority = { I: 0, US: 1, VA: 2 };
+  let best = null;
+  list.forEach(ref => {
+    const parsed = parseHighwayRef(ref);
+    if (!parsed) return;
+    if (best === null || priority[parsed.type] < priority[best]) best = parsed.type;
+  });
+  return best;
+}
+
 // Which ref(s) to show a shield+direction for. Two (or more) concurrent
 // Interstates is the one case where there's genuinely no single "correct"
 // choice — e.g. I-40/I-85 near Durham/Hillsborough is signed and

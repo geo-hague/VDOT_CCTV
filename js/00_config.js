@@ -12,7 +12,20 @@ const BEARING_CONFIRM_COUNT = 2;   // consecutive disagreeing samples needed to 
 const HIGHWAY_RECHECK_MS = 6000;   // re-run highway snap at most this often (base rate — backs off on repeated failures, see overpassFailStreak in 01_state.js)
 const HIGHWAY_RECHECK_MAX_MS = 90000; // cap for the exponential backoff below, so we never go longer than 90s between attempts even during a sustained outage/rate-limit
 const HIGHWAY_CONFIRM_COUNT = 2;   // consecutive matching reads needed before switching displayed highway
-const MAX_SEARCH_DIST_M = 24140.2; // ~15 miles — cameras farther than this on your highway are ignored
+const MAX_SEARCH_DIST_M = 32186.9; // 20 miles — cameras farther than this on your highway are ignored
+const SECONDARY_REF_RANGE_M = 804.672; // 0.5 miles — when multiple routes are concurrent
+                                    // (e.g. locked to ["I-26","US-25","US-74"]), only refs of the
+                                    // TOP route type get the full search radius above. Lower-tier
+                                    // refs are capped to this much tighter window, since a real
+                                    // concurrency is a short physical overlap, not a long shared
+                                    // stretch — without this, a camera tagged e.g. "US-25" miles
+                                    // away on a DIVERGED parallel alignment (same route number,
+                                    // different road once the concurrency ends) would incorrectly
+                                    // show up just because that number is part of the current lock.
+                                    // NOTE: used by getScoredCameras() in 05_cameras.js — that file
+                                    // MUST be deployed alongside this one and 03_highway.js, or it
+                                    // throws a ReferenceError that silently kills cameras, mile
+                                    // markers, and direction all at once.
 const SWAP_BUFFER_M = 402.336;     // 1320 ft (1/4 mile) — a camera stays the displayed
                                     // "nearest"/"next" camera, counting down through negative
                                     // distance, until it's this far behind you
@@ -44,7 +57,7 @@ const COMMONS_FILEPATH = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
 // deploy (free tier) and messagesigns-worker/README.md for setup. Point
 // this at your deployed worker URL once it's live.
 const MSG_SIGN_PROXY_URL = 'https://vdotdms.m-c-hunt429.workers.dev/';
-const MSG_SIGN_RANGE_M = 16093.4;   // 10 miles
+const MSG_SIGN_RANGE_M = 32186.9;   // 20 miles — matches MAX_SEARCH_DIST_M (cameras)
 const MSG_SIGN_POLL_MS = 30000;     // re-poll signs this often so a sign 10mi out
                                      // can't silently change message before we reach it
 

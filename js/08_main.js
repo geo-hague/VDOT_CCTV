@@ -61,6 +61,15 @@ async function init() {
   locateBtn.addEventListener('click', locate);
   updateScanBarState();
 
+  // DMS ahead/behind browsing — markup is optional (see the fallback in
+  // updateMessageBanner()), so these only get wired up if it's present.
+  const msgAheadBtn = document.getElementById('msg-scan-ahead-btn');
+  const msgBehindBtn = document.getElementById('msg-scan-behind-btn');
+  const msgCounterBtn = document.getElementById('msg-scan-counter-btn');
+  if (msgAheadBtn) msgAheadBtn.addEventListener('click', moveMsgAhead);
+  if (msgBehindBtn) msgBehindBtn.addEventListener('click', moveMsgBehind);
+  if (msgCounterBtn) msgCounterBtn.addEventListener('click', exitMsgBrowse);
+
   if (!navigator.geolocation) {
     gpsText.textContent = 'Geolocation not supported on this device/browser.';
     return;

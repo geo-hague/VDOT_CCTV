@@ -3,8 +3,43 @@
 // shares top-level `let`/`const` scope with the other js/*.js files.
 
 // ---------- Main position handling (shared by real GPS and simulator) ----------
-// ---------- Main position handling (shared by real GPS and simulator) ----------
+let handlePositionBusy = false; // guards against overlapping calls — see handlePosition() below
+
 async function handlePosition(lat, lon, source) {
+  // A slow Overpass response (the awaits below) combined with the sim's
+  // tick interval — which fires on schedule regardless of whether the
+  // previous handlePosition() call has finished — can let two calls run
+  // concurrently. Without this guard, a newer call could read
+  // currentHighway (or write its own setDebug snapshot) at a moment the
+  // older, still-in-flight call hasn't finished updating it yet, which
+  // produces contradictory debug output (a stale "highway" value sitting
+  // next to a fresh "locked" one) and cameras/mile markers intermittently
+  // coming up empty. Simply skipping the newer call is safe — position
+  // updates happen frequently, so dropping one is harmless, unlike
+  // corrupting shared state via an interleaved read/write.
+  if (handlePositionBusy) return;
+  handlePositionBusy = true;
+  try {
+    await handlePositionInner(lat, lon, source);
+  } catch (err) {
+    // Surface the error into the debug panel, not just the console. A
+    // throw anywhere inside handlePositionInner() silently kills
+    // everything downstream of it (cameras, mile markers, direction) while
+    // leaving earlier debug keys sitting there looking fine — which is
+    // exactly the failure mode that makes this class of bug hard to pin
+    // down. If handlePositionError shows up in the panel, its message and
+    // stack name the real culprit directly.
+    setDebug({
+      handlePositionError: err && err.message ? err.message : String(err),
+      handlePositionStack: err && err.stack ? String(err.stack).split('\n').slice(0, 4).join(' | ') : null,
+    });
+    console.error('handlePosition failed:', err);
+  } finally {
+    handlePositionBusy = false;
+  }
+}
+
+async function handlePositionInner(lat, lon, source) {
   lastKnownPos = { lat, lon };
 
   gpsDot.className = 'dot live';
@@ -140,6 +175,8 @@ function startSimulation() {
   }
 
   // Reset tracking state so the sim starts clean
+  clearDebug();
+  handlePositionBusy = false;
   posHistory = [];
   lastStableBearing = null;
   pendingBearing = null;
@@ -163,6 +200,9 @@ function startSimulation() {
   shieldDirEls = {};
   messageSigns = [];
   lastMsgSignFetch = 0;
+  msgBrowseActive = false;
+  msgBrowseList = [];
+  msgBrowseIndex = 0;
   activeSignId = null;
   lastSpokenMessage = null;
   shieldGroupEl.innerHTML = '';
