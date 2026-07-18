@@ -110,6 +110,18 @@
     display: block; margin-top: 3px; font-size: 11px; font-weight: 600;
     color: #c99a52; text-transform: none; letter-spacing: 0.02em;
   }
+  #msg-scan-controls {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,183,77,0.25);
+  }
+  #msg-scan-controls button {
+    background: none; border: 1px solid rgba(255,183,77,0.4); border-radius: 6px;
+    color: var(--warn); font-size: 12px; font-weight: 700; padding: 3px 8px;
+    cursor: pointer; text-transform: none; letter-spacing: normal;
+  }
+  #msg-scan-controls button:disabled { opacity: 0.3; cursor: default; }
+  #msg-scan-counter-btn { min-width: 34px; font-variant-numeric: tabular-nums; }
+  #msg-scan-counter-btn.active { background: rgba(255,183,77,0.15); }
 
   #cam-list {
     padding: 12px; display: flex; flex-direction: column; gap: 12px;
