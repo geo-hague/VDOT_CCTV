@@ -183,6 +183,15 @@
   .video-wrapper.stalled .video-retry { display: flex; }
   .video-retry .retry-icon { font-size: 22px; }
 
+  .video-fullscreen-btn {
+    position: absolute; top: 8px; right: 8px; z-index: 6;
+    width: 32px; height: 32px; border-radius: 6px; border: none;
+    background: rgba(0,0,0,0.5); color: #fff; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+  }
+  .video-fullscreen-btn:active { background: rgba(0,0,0,0.7); }
+
   #scan-bar {
     position: sticky; top: var(--top-group-h, 53px); z-index: 15;
     display: flex; gap: 8px; padding: 10px 12px;
