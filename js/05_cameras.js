@@ -116,6 +116,37 @@ function destroySlotEl(el) {
   el._retryCount = 0;
 }
 
+// Cross-browser fullscreen toggle for a camera slot. iOS Safari — the
+// primary device this app is built for — doesn't support the standard
+// Fullscreen API on arbitrary elements AT ALL, only directly on a
+// <video> element, via the older webkitEnterFullscreen() API. Requesting
+// fullscreen on the .video-wrapper div (which is what desktop/Android
+// browsers want, so our own spinner/retry UI stay visible while
+// fullscreen) would silently do nothing on iOS — so this specifically
+// falls back to the video-element API there instead of just failing quietly.
+function toggleFullscreen(el) {
+  const wrapper = el.querySelector('.video-wrapper');
+  const video = el.querySelector('video');
+  const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+
+  if (fsElement) {
+    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    return;
+  }
+
+  if (wrapper && wrapper.requestFullscreen) {
+    wrapper.requestFullscreen().catch(() => {});
+  } else if (wrapper && wrapper.webkitRequestFullscreen) {
+    wrapper.webkitRequestFullscreen();
+  } else if (video && video.webkitEnterFullscreen) {
+    // iOS Safari: no div-level fullscreen at all — this is the only way
+    // to get a true fullscreen video there, and it uses iOS's own native
+    // fullscreen video player/controls rather than our custom UI.
+    video.webkitEnterFullscreen();
+  }
+}
+
 function setLoadingState(el, isLoading) {
   const wrapper = el.querySelector('.video-wrapper');
   if (wrapper) wrapper.classList.toggle('loading', isLoading);
@@ -238,6 +269,24 @@ function attachStream(el, cam) {
       }
     });
   }
+
+  // Fullscreen button click — delegated on el, NOT bound directly to the
+  // button, for the same reason as the retry handler above:
+  // renderCameraIntoEl() replaces el.innerHTML wholesale on every new
+  // camera, which destroys any listener bound directly to the old button
+  // element along with it. el itself persists across camera swaps (only
+  // its contents change), so delegating here is what makes the flag-once
+  // binding below actually correct instead of only working for the first
+  // camera ever loaded into this slot.
+  if (!el._fullscreenHandlerBound) {
+    el._fullscreenHandlerBound = true;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('.video-fullscreen-btn')) {
+        e.stopPropagation(); // don't also trigger the retry-tap handler above
+        toggleFullscreen(el);
+      }
+    });
+  }
 }
 
 function renderCameraIntoEl(el, camWithDist, label) {
@@ -283,6 +332,7 @@ function renderCameraIntoEl(el, camWithDist, label) {
     <div class="cam-location">${cam.location || ''}</div>
     <div class="video-wrapper">
       <video muted autoplay playsinline webkit-playsinline></video>
+      <button class="video-fullscreen-btn" type="button" aria-label="Full screen">⛶</button>
       <div class="video-loading"><div class="spinner"></div><div>Loading stream…</div></div>
       <button class="video-retry" type="button">
         <span class="retry-icon">⟳</span>
