@@ -402,15 +402,26 @@ const MM_SNAP_RADIUS_M = 160.9; // 0.1 mile — within this, use the sign's exac
 // linearly interpolate the driver's position to a tenth of a mile. Signs
 // on the opposite carriageway are excluded entirely via the bearing-derived
 // direction, which also fixes direction flip-flopping.
-async function updateMilepostAndDirection(lat, lon) {
-  const now = Date.now();
-  if (now - lastMilepostCheck < MILEMARKER_RECHECK_MS) return;
-  lastMilepostCheck = now;
-  if (!currentHighway || !currentHighway.length) return;
+let mmCacheFeatures = null; // nearby signs from the last (throttled) network query
 
-  const { features, error } = await queryNearestMileMarkers(lat, lon);
-  if (error) { setDebug({ milepostLookup: error }); return; }
-  if (!features.length) { setDebug({ milepostLookup: 'no mile markers within search radius' }); return; }
+async function updateMilepostAndDirection(lat, lon) {
+  if (!currentHighway || !currentHighway.length) return;
+  const now = Date.now();
+
+  // Only the NETWORK query is throttled to MILEMARKER_RECHECK_MS. The milepost
+  // itself is recomputed from the cached signs on EVERY position update, so the
+  // displayed value tracks your position continuously and snaps to a real sign
+  // the instant you're within MM_SNAP_RADIUS_M of one — instead of refreshing
+  // once every 8s, which left it lagging ~0.1-0.2 mi behind at highway speed.
+  if (!mmCacheFeatures || now - lastMilepostCheck >= MILEMARKER_RECHECK_MS) {
+    lastMilepostCheck = now;
+    const { features, error } = await queryNearestMileMarkers(lat, lon);
+    if (error) setDebug({ milepostLookup: error });               // keep last good cache
+    else if (features.length) mmCacheFeatures = features;
+    else setDebug({ milepostLookup: 'no mile markers within search radius' });
+  }
+  const features = mmCacheFeatures;
+  if (!features || !features.length) return;
 
   const withMeta = features.map(f => {
     const a = f.attributes || {};
