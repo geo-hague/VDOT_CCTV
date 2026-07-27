@@ -486,6 +486,7 @@ async function updateMilepostAndDirection(lat, lon) {
   } else {
     interpolated = candidates[0].mp;
   }
+  const newMilepost = Math.round(interpolated * 10) / 10;
   currentMilepost = newMilepost;
 
   // ---- Mile-marker ascending/descending check ----
