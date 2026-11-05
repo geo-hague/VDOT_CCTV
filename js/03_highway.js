@@ -10,7 +10,11 @@
 const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter',
 ];
+let overpassPreferred = 0; // index of the mirror that last answered — tried first next time,
+                           // so a dead/rate-limited mirror doesn't burn 6s on every lock attempt
 const OVERPASS_FETCH_TIMEOUT_MS = 6000; // hard client-side cap per mirror attempt — the query's
                                           // own [timeout:10] only bounds Overpass's own server-side
                                           // processing, not how long our fetch() waits for a response,
@@ -30,12 +34,15 @@ async function snapToHighway(lat, lon) {
   `;
 
   let lastError = null;
-  for (const baseUrl of OVERPASS_URLS) {
+  const order = OVERPASS_URLS.map((_, i) => (overpassPreferred + i) % OVERPASS_URLS.length);
+  for (const idx of order) {
+    const baseUrl = OVERPASS_URLS[idx];
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), OVERPASS_FETCH_TIMEOUT_MS);
     try {
       const resp = await fetch(baseUrl, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
         signal: controller.signal,
       });
@@ -45,6 +52,7 @@ async function snapToHighway(lat, lon) {
         continue; // try next mirror
       }
       const data = await resp.json();
+      overpassPreferred = idx; // this mirror works — start here next time
       if (!data.elements || !data.elements.length) {
         return { rawName: null, normalizedList: [], error: null };
       }
