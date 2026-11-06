@@ -1,0 +1,46 @@
+name: Build Highway Data
+
+# Builds the small map tiles the website uses to work out which highway you are
+# on (replaces the Overpass API). Downloads the free OpenStreetMap extract for the
+# state from Geofabrik, keeps only motorway/trunk roads, and writes tiles into
+# docs/highways/. The big .pbf is deleted when the job ends — never committed.
+
+on:
+  schedule:
+    - cron: '0 6 2 * *'   # monthly; highways rarely change
+  workflow_dispatch: {}    # run once by hand to create the tiles the first time
+
+permissions:
+  contents: write
+
+env:
+  REGION: north-america/us/virginia
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install osmium
+        run: sudo apt-get update && sudo apt-get install -y osmium-tool
+      - name: Download state extract
+        run: curl -fL --retry 3 --retry-delay 10 -o region.osm.pbf "https://download.geofabrik.de/${REGION}-latest.osm.pbf"
+      - name: Keep only motorway and trunk roads
+        run: osmium tags-filter region.osm.pbf w/highway=motorway,trunk -o hw.osm.pbf --overwrite
+      - name: Export as lines
+        run: osmium export hw.osm.pbf -f geojsonseq --geometry-types=linestring -o hw.geojsonseq --overwrite
+      - name: Build tiles
+        run: node build-highways.js hw.geojsonseq docs/highways
+      - name: Commit tiles
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A docs/highways
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "Rebuild highway tiles"
+          git pull --rebase origin main
+          git push
