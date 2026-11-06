@@ -7,87 +7,101 @@
 // Restricted to motorway/trunk (excludes _link/ramp ways, primary roads, and any
 // crossing road at overpasses) and searched within a tight radius so we
 // don't accidentally grab a road passing underneath/above.
-const OVERPASS_URLS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://lz4.overpass-api.de/api/interpreter',
-];
-let overpassPreferred = 0; // index of the mirror that last answered — tried first next time,
-                           // so a dead/rate-limited mirror doesn't burn 6s on every lock attempt
-const OVERPASS_FETCH_TIMEOUT_MS = 6000; // hard client-side cap per mirror attempt — the query's
-                                          // own [timeout:10] only bounds Overpass's own server-side
-                                          // processing, not how long our fetch() waits for a response,
-                                          // so a hung/slow mirror could otherwise stall highway lock
-                                          // far longer than necessary before ever trying the 2nd mirror
+// ---------- Highway snap (local tiles — no Overpass) ----------
+// Overpass is a free public service and can be down for days, so the highway
+// lock now comes from small static tiles built from the state's OpenStreetMap
+// extract (build-highways.js, run monthly by the "Build Highway Data" workflow).
+// Each tile (./highways/t_<iy>_<ix>.json) covers 0.2° x 0.2° and holds every
+// motorway/trunk line in or within ~300 m of that square, so the one tile under
+// you is all we ever need. Same result shape the old Overpass version returned.
+const HIGHWAY_TILE_DEG = 0.2;          // MUST match TILE_DEG in build-highways.js
+const HIGHWAY_TILE_BASE = './highways/';
+const HIGHWAY_TILE_CACHE_MAX = 12;
 const SNAP_RADIUS_M = 60; // how close a way must be to count as "you're on it" —
                            // loose enough to tolerate the test simulator's straight-line
                            // path drifting off the actual (curved) road; real GPS traces
                            // will sit right on the road so this won't hurt real accuracy.
 
-async function snapToHighway(lat, lon) {
-  const query = `
-    [out:json][timeout:10];
-    way(around:${SNAP_RADIUS_M},${lat},${lon})
-      [highway~"^(motorway|trunk)$"];
-    out tags;
-  `;
+const highwayTileCache = new Map(); // "iy_ix" -> Promise<array of {r|n, p}>
+let highwayDataBuiltPromise = null;
 
-  let lastError = null;
-  const order = OVERPASS_URLS.map((_, i) => (overpassPreferred + i) % OVERPASS_URLS.length);
-  for (const idx of order) {
-    const baseUrl = OVERPASS_URLS[idx];
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), OVERPASS_FETCH_TIMEOUT_MS);
-    try {
-      const resp = await fetch(baseUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      if (!resp.ok) {
-        lastError = `HTTP ${resp.status} from ${baseUrl}`;
-        continue; // try next mirror
-      }
-      const data = await resp.json();
-      overpassPreferred = idx; // this mirror works — start here next time
-      if (!data.elements || !data.elements.length) {
-        return { rawName: null, normalizedList: [], error: null };
-      }
-      // IMPORTANT: don't just look at elements[0]. Divided highways are
-      // almost always split into separate way segments in OSM (one per
-      // carriageway direction, plus ramps/merges), and several can sit
-      // within the search radius at once — Overpass's ordering of them
-      // is arbitrary, not proximity-ranked. At a concurrency (e.g. I-26
-      // running with US-74), taking only the first element risks picking
-      // a segment tagged with just one of the two refs. So union refs
-      // across every nearby element instead.
-      const refSet = new Set();
-      let nameFallback = null;
-      for (const el of data.elements) {
-        const t = el.tags || {};
-        if (t.ref) {
-          t.ref.split(';').map(s => s.trim()).filter(Boolean).forEach(r => refSet.add(r));
-        } else if (!nameFallback && t.name) {
-          nameFallback = t.name.trim();
+// true = meta.json exists, false = it doesn't (data never built), null = couldn't tell
+function highwayDataBuilt() {
+  if (!highwayDataBuiltPromise) {
+    highwayDataBuiltPromise = fetch(HIGHWAY_TILE_BASE + 'meta.json', { cache: 'no-store' })
+      .then(r => r.ok)
+      .catch(() => { highwayDataBuiltPromise = null; return null; });
+  }
+  return highwayDataBuiltPromise;
+}
+
+function loadHighwayTile(key) {
+  let p = highwayTileCache.get(key);
+  if (p) return p;
+  p = fetch(`${HIGHWAY_TILE_BASE}t_${key}.json`)
+    .then(async (resp) => {
+      if (resp.status === 404) {
+        // Normally a missing tile just means no motorway/trunk in that square. But if the
+        // data was never built at all, say so instead of silently finding nothing.
+        if ((await highwayDataBuilt()) === false) {
+          throw new Error('highway data not built yet (run the Build Highway Data workflow)');
         }
+        return [];
       }
-      const sources = refSet.size ? [...refSet] : (nameFallback ? [nameFallback] : []);
-      if (!sources.length) return { rawName: null, normalizedList: [], error: null };
+      if (!resp.ok) throw new Error(`tile ${key} HTTP ${resp.status}`);
+      return resp.json();
+    })
+    .catch((err) => { highwayTileCache.delete(key); throw err; });
+  highwayTileCache.set(key, p);
+  while (highwayTileCache.size > HIGHWAY_TILE_CACHE_MAX) {
+    highwayTileCache.delete(highwayTileCache.keys().next().value); // drop oldest
+  }
+  return p;
+}
 
-      const normalizedList = sources.map(normalizeHighwayName).filter(Boolean);
-      return { rawName: sources.join(' / '), normalizedList, error: null };
-    } catch (err) {
-      clearTimeout(timeoutId);
-      lastError = err.name === 'AbortError'
-        ? `${baseUrl}: timed out after ${OVERPASS_FETCH_TIMEOUT_MS}ms`
-        : `${baseUrl}: ${err.message}`;
+// Shortest distance in meters from (lat,lon) to a polyline of [lat,lon] points.
+function distToPolylineM(lat, lon, pts) {
+  const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540;
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const ax = (pts[i][1] - lon) * kx,     ay = (pts[i][0] - lat) * ky;
+    const bx = (pts[i + 1][1] - lon) * kx, by = (pts[i + 1][0] - lat) * ky;
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    let t = len2 ? -(ax * dx + ay * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(ax + t * dx, ay + t * dy);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+async function snapToHighway(lat, lon) {
+  let tile;
+  try {
+    tile = await loadHighwayTile(`${Math.floor(lat / HIGHWAY_TILE_DEG)}_${Math.floor(lon / HIGHWAY_TILE_DEG)}`);
+  } catch (err) {
+    return { rawName: null, normalizedList: [], error: 'highway tiles: ' + err.message };
+  }
+
+  // IMPORTANT: union refs across EVERY nearby way, don't just take the first.
+  // Divided highways are split into separate ways per carriageway (plus ramps),
+  // and at a concurrency (e.g. I-26 running with US-74) one segment may carry
+  // only one of the two refs.
+  const refSet = new Set();
+  let nameFallback = null;
+  for (const way of tile) {
+    if (distToPolylineM(lat, lon, way.p) > SNAP_RADIUS_M) continue;
+    if (way.r) {
+      way.r.split(';').map(s => s.trim()).filter(Boolean).forEach(r => refSet.add(r));
+    } else if (!nameFallback && way.n) {
+      nameFallback = way.n.trim();
     }
   }
-  console.warn('Overpass snap failed on all mirrors:', lastError);
-  return { rawName: null, normalizedList: [], error: lastError };
+  const sources = refSet.size ? [...refSet] : (nameFallback ? [nameFallback] : []);
+  if (!sources.length) return { rawName: null, normalizedList: [], error: null };
+
+  const normalizedList = sources.map(normalizeHighwayName).filter(Boolean);
+  return { rawName: sources.join(' / '), normalizedList, error: null };
 }
 
 // ---------- Direction of travel (with hysteresis) ----------
