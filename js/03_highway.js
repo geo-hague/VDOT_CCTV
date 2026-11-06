@@ -15,7 +15,7 @@
 // motorway/trunk line in or within ~300 m of that square, so the one tile under
 // you is all we ever need. Same result shape the old Overpass version returned.
 const HIGHWAY_TILE_DEG = 0.2;          // MUST match TILE_DEG in build-highways.js
-const HIGHWAY_TILE_BASE = './highways/';
+const HIGHWAY_TILE_BASES = ['./highways/', './docs/highways/']; // site served from /docs, or from the repo root
 const HIGHWAY_TILE_CACHE_MAX = 12;
 const SNAP_RADIUS_M = 60; // how close a way must be to count as "you're on it" —
                            // loose enough to tolerate the test simulator's straight-line
@@ -23,31 +23,39 @@ const SNAP_RADIUS_M = 60; // how close a way must be to count as "you're on it" 
                            // will sit right on the road so this won't hurt real accuracy.
 
 const highwayTileCache = new Map(); // "iy_ix" -> Promise<array of {r|n, p}>
-let highwayDataBuiltPromise = null;
+let highwayBaseState = null;        // { base, checkedAt, detail } — which folder actually has the data
 
-// true = meta.json exists, false = it doesn't (data never built), null = couldn't tell
-function highwayDataBuilt() {
-  if (!highwayDataBuiltPromise) {
-    highwayDataBuiltPromise = fetch(HIGHWAY_TILE_BASE + 'meta.json', { cache: 'no-store' })
-      .then(r => r.ok)
-      .catch(() => { highwayDataBuiltPromise = null; return null; });
+// Finds which base folder serves meta.json (written by build-highways.js). Remembers a hit
+// for the whole session; a miss is re-checked after 30s so building the data while the
+// page is open recovers without a reload.
+async function findHighwayBase() {
+  if (highwayBaseState && (highwayBaseState.base || Date.now() - highwayBaseState.checkedAt < 30000)) {
+    return highwayBaseState;
   }
-  return highwayDataBuiltPromise;
+  const tried = [];
+  for (const base of HIGHWAY_TILE_BASES) {
+    try {
+      const r = await fetch(base + 'meta.json', { cache: 'no-store' });
+      if (r.ok) { highwayBaseState = { base, checkedAt: Date.now() }; return highwayBaseState; }
+      tried.push(`${base}meta.json HTTP ${r.status}`);
+    } catch (e) {
+      tried.push(`${base}meta.json ${e.message}`);
+    }
+  }
+  highwayBaseState = { base: null, checkedAt: Date.now(), detail: tried.join(', ') };
+  return highwayBaseState;
 }
 
-function loadHighwayTile(key) {
+async function loadHighwayTile(key) {
+  const found = await findHighwayBase();
+  if (!found.base) {
+    throw new Error(`highway data not found (${found.detail}) — run Build Highway Data, and make sure the site is served from the folder that contains highways/`);
+  }
   let p = highwayTileCache.get(key);
   if (p) return p;
-  p = fetch(`${HIGHWAY_TILE_BASE}t_${key}.json`)
-    .then(async (resp) => {
-      if (resp.status === 404) {
-        // Normally a missing tile just means no motorway/trunk in that square. But if the
-        // data was never built at all, say so instead of silently finding nothing.
-        if ((await highwayDataBuilt()) === false) {
-          throw new Error('highway data not built yet (run the Build Highway Data workflow)');
-        }
-        return [];
-      }
+  p = fetch(`${found.base}t_${key}.json`)
+    .then((resp) => {
+      if (resp.status === 404) return []; // data exists (meta.json found), so this square just has no motorway/trunk
       if (!resp.ok) throw new Error(`tile ${key} HTTP ${resp.status}`);
       return resp.json();
     })
