@@ -64,17 +64,38 @@ function normalizeHighwayName(raw) {
   return s;
 }
 
-// ---------- Load static camera list ----------
-// VA 511's feed is GeoJSON (FeatureCollection of Point features), not the
-// flat { cameras: [...] } shape NC's static file uses — normalize here so
-// every other file (03_highway.js, 05_cameras.js) can stay unchanged and
-// just deal with { id, lat, lon, roadway, direction, location, videoUrl }.
+// ---------- Load camera list ----------
+// VDOT moved its 511 camera feed in late 2026: the old
+// /services/map/layers/map/cams endpoint now 404s. The replacement below
+// returns { data: [ GeoJSON "Feature" Points ] } (the list is under "data", not
+// "features"), with the same per-camera properties as before — https_url is a
+// plain, token-free HLS playlist (.../rtplive/<name>/playlist.m3u8).
+// Normalize here so every other file (03_highway.js, 05_cameras.js) can stay
+// unchanged and just deal with { id, lat, lon, roadway, direction, location, videoUrl }.
+const VA_CAMERAS_URL = 'https://511.vdot.virginia.gov/services/511/map/array/cameras';
+
+const NUMBERED_ROUTE_RE = /^(I|US|NC|VA)-\d+$/;
+
+// Pick the best roadway label for a camera. The feed's "route" is usually right
+// ("I-66", "US-50", "VA-236"), but some cameras have it empty or set to a street
+// name while the description names the real route ("US-50 AT GLEBE RD"). Prefer a
+// numbered route from "route", then from the description, else the raw route.
+function resolveRoadway(p) {
+  const fromRoute = normalizeHighwayName(p.route || '');
+  if (fromRoute && NUMBERED_ROUTE_RE.test(fromRoute)) return p.route;
+  const fromDesc = normalizeHighwayName(p.description || '');
+  if (fromDesc && NUMBERED_ROUTE_RE.test(fromDesc)) return fromDesc;
+  return p.route || '';
+}
+
 async function loadCameras() {
   try {
-    const resp = await fetch(CAMERAS_URL);
+    const resp = await fetch(VA_CAMERAS_URL);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const geojson = await resp.json();
-    const features = geojson.features || [];
+    const json = await resp.json();
+    // New feed: { data: [...] }. Also accept the old GeoJSON FeatureCollection
+    // ({ features: [...] }) or a bare array, in case VDOT shuffles it again.
+    const features = Array.isArray(json) ? json : (json.data || json.features || []);
 
     allCameras = features
       .filter(f => {
@@ -90,7 +111,7 @@ async function loadCameras() {
         return {
           id: p.id ?? p.name,
           lat, lon,
-          roadway: p.route || '',
+          roadway: resolveRoadway(p),
           direction: p.direction || '',
           location: p.description || p.name || '',
           videoUrl: p.https_url,   // HLS (.m3u8) — plays via the existing hls.js wiring in 05_cameras.js
@@ -98,7 +119,8 @@ async function loadCameras() {
       })
       .filter(c => c !== null);
 
-    console.log(`Loaded ${allCameras.length} VA cameras.`);
+    setDebug({ cameraRecordCount: features.length, cameraParsedCount: allCameras.length });
+    console.log(`Loaded ${allCameras.length} VA cameras (of ${features.length} records).`);
   } catch (err) {
     // Camera load failing (CORS block, network error, endpoint down, etc.)
     // must NOT stop the rest of the app from starting — init() awaits this
@@ -110,4 +132,3 @@ async function loadCameras() {
     console.error('Failed to load VA cameras:', err);
   }
 }
-
